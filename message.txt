@@ -1,0 +1,340 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Threading.Tasks;
+using System.IO.Compression;
+// poop code lol
+class Program
+{
+    static string appdatap = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Salad 2.1");
+    static string versioncheckg = "https://raw.githubusercontent.com/Insalad/SaladBootstrapper/refs/heads/main/VersionCheck";
+    static string saladdownload = "https://github.com/Insalad/SaladBootstrapper/raw/refs/heads/main/Salad%202.1.zip";
+    static string killswitch = "https://raw.githubusercontent.com/Insalad/SaladBootstrapper/refs/heads/main/Killswitch";
+    static string installedsaladv = Path.Combine(appdatap, "VERSION.txt");
+    static string saladp = Path.Combine(appdatap, "Saalad.exe");
+    static string[] tobackup = { "Scripts", "Settings", "autoexec", "Tabs", "workspace" };
+    static string logfp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "exception_salad_log.txt");
+
+    static async Task Main()
+    {
+        try
+        {
+            await RunChecker();
+            await RunBS();
+        }
+        catch (Exception ex)
+        {
+            LogException(ex);
+            PError($"unexpected error: {ex.Message}");
+        }
+    }
+
+    static async Task RunChecker()
+    {
+        try
+        {
+            if (File.Exists(Path.Combine(Directory.GetCurrentDirectory(), "dependenciescheck.bat")))
+            {
+                PInfo("Running dependencies checks");
+
+                ProcessStartInfo pinfostr = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c \"{Path.Combine(Directory.GetCurrentDirectory(), "dependenciescheck.bat")}\"",
+                    Verb = "runas", 
+                    WindowStyle = ProcessWindowStyle.Hidden 
+                };
+
+                Process process = Process.Start(pinfostr);
+                process.WaitForExit();
+                PInfo("dependenciescheck.bat completed");
+            }
+            else
+            {
+                PError("The file 'dependenciescheck.bat' was not found, please reinstall the bootstrapper");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogException(ex);
+            PError($"error running batch file as admin: {ex.Message}");
+        }
+    }
+
+    static async Task RunBS()
+    {
+        PInfo("Starting..");
+        foreach (var process in Process.GetProcessesByName("Saalad"))
+        {
+            try
+            {
+                process.Kill();
+                process.WaitForExit();
+            }
+            catch (Exception ex)
+            {
+                LogException(ex);
+                PError($"failed to terminate Salad: {ex.Message}");
+                WaitForExit();
+            }
+        }
+
+        Directory.CreateDirectory(appdatap);
+
+        if (Directory.Exists(appdatap))
+        {
+            string ksstat = await DownloadStringAsync(killswitch);
+            if (ksstat.Trim().Equals("yes", StringComparison.OrdinalIgnoreCase))
+            {
+                PError("Salad is currently not working/outdated, do you still want to run it? press 1 if yes, else press 2 to exit.");
+
+                string choice = Console.ReadLine();
+                if (choice != "1")
+                {
+                    return;
+                }
+            }
+
+            string installedv = File.Exists(installedsaladv) ? File.ReadAllText(installedsaladv).Trim() : "0.0";
+            string latestv = (await DownloadStringAsync(versioncheckg)).Trim();
+            PInfo($"Installed Version: '{installedv}'");
+            PInfo($"Latest Version: '{latestv}'");
+            Version installedvs = new Version(installedv);
+            Version latestvs = new Version(latestv);
+            if (installedvs < latestvs)
+            {
+                PWarning($"Updating from version {installedvs} to {latestvs}...");
+                await UpdateSalad();
+            }
+            else if (installedvs == latestvs)
+            {
+                PSuccess("Latest version installed, starting salad..");
+                RunSalad();
+            }
+            else
+            {
+                PWarning("Skibidi Toilet flexing that Alpha Male rizz, just like Andrew Tate said: ‘The world is full of cruel people’!!!!!");
+                WaitForExit();
+            }
+        }
+        else
+        {
+            PWarning("Installing Salad..");
+            await UpdateSalad();
+        }
+    }
+
+    static async Task UpdateSalad()
+    {
+        try
+        {
+            var backupf = Path.Combine(appdatap, "Backup");
+            Directory.CreateDirectory(backupf);
+            foreach (var folder in tobackup)
+            {
+                try
+                {
+                    string saladp2 = Path.Combine(appdatap, folder);
+                    if (Directory.Exists(saladp2))
+                    {
+                        string backupp = Path.Combine(backupf, folder);
+                        Directory.CreateDirectory(backupp);
+                        CopyDir(saladp2, backupp);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogException(ex);
+                    PError($"failed to backup folder '{folder}': {ex.Message}");
+                    WaitForExit();
+                }
+            }
+
+            foreach (var dir in Directory.GetDirectories(appdatap))
+            {
+                if (!dir.EndsWith("Backup"))
+                {
+                    try
+                    {
+                        Directory.Delete(dir, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogException(ex);
+                        PError($"failed to delete directory '{dir}': {ex.Message}");
+                        WaitForExit();
+                    }
+                }
+            }
+            foreach (var file in Directory.GetFiles(appdatap))
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception ex)
+                {
+                    LogException(ex);
+                    PError($"failed to delete file '{file}': {ex.Message}");
+                    WaitForExit();
+                }
+            }
+            string updatef = Path.Combine(appdatap, "update.zip");
+            using (WebClient client = new WebClient())
+            {
+                client.DownloadFile(saladdownload, updatef);
+            }
+            ZipFile.ExtractToDirectory(updatef, appdatap, true);
+            File.Delete(updatef);
+            foreach (var folder in tobackup)
+            {
+                string backupfp = Path.Combine(backupf, folder);
+                string newsaladp2 = Path.Combine(appdatap, folder);
+                if (Directory.Exists(backupfp))
+                {
+                    Directory.CreateDirectory(newsaladp2);
+                    CopyDir(backupfp, newsaladp2);
+                }
+            }
+            Directory.Delete(backupf, true);
+            await File.WriteAllTextAsync(installedsaladv, await DownloadStringAsync(versioncheckg));
+            PSuccess("Updated!");
+            RunSalad();
+        }
+        catch (Exception ex)
+        {
+            LogException(ex);
+            PError($"unexpected error during update: {ex.Message}");
+            WaitForExit();
+        }
+    }
+
+    static void RunSalad()
+    {
+        try
+        {
+            if (File.Exists(saladp))
+            {
+                Process.Start(saladp);
+                PSuccess("Started.");
+            }
+            else
+            {
+                PError("Salad not found; reinstalling..");
+                UpdateSalad().Wait();
+            }
+        }
+        catch (Exception ex)
+        {
+            LogException(ex);
+            PError($"exception: {ex.Message}");
+            WaitForExit();
+            UpdateSalad().Wait();
+        }
+    }
+
+    static async Task<string> DownloadStringAsync(string url)
+    {
+        try
+        {
+            using (WebClient client = new WebClient())
+            {
+                return await client.DownloadStringTaskAsync(url);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogException(ex);
+            PError($"failed to download string from {url}: {ex.Message}");
+            WaitForExit();
+            return string.Empty;
+        }
+    }
+
+    static void CopyDir(string srcdir, string destdir)
+    {
+        try
+        {
+            foreach (var file in Directory.GetFiles(srcdir))
+            {
+                try
+                {
+                    string destfp = Path.Combine(destdir, Path.GetFileName(file));
+                    File.Copy(file, destfp, true);
+                }
+                catch (Exception ex)
+                {
+                    LogException(ex);
+                    PError($"failed to copy file '{file}': {ex.Message}");
+                    WaitForExit();
+                }
+            }
+
+            foreach (var dir in Directory.GetDirectories(srcdir))
+            {
+                try
+                {
+                    string destdirp = Path.Combine(destdir, Path.GetFileName(dir));
+                    Directory.CreateDirectory(destdirp);
+                    CopyDir(dir, destdirp);
+                }
+                catch (Exception ex)
+                {
+                    LogException(ex);
+                    PError($"failed to copy directory '{dir}': {ex.Message}");
+                    WaitForExit();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogException(ex);
+            PError($"failed to copy directory '{srcdir}' to '{destdir}': {ex.Message}");
+            WaitForExit();
+        }
+    }
+
+    static void LogException(Exception ex)
+    {
+        string logmsg = $"{DateTime.Now}: {ex.GetType()}: {ex.Message}{Environment.NewLine}{ex.StackTrace}";
+        File.AppendAllText(logfp, logmsg + Environment.NewLine);
+        Console.WriteLine($"exception logged to: {logfp}");
+    }
+
+
+    static void PError(string message)
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"[ERROR] {message}");
+        Console.ResetColor();
+    }
+
+    static void PWarning(string message)
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"[WARNING] {message}");
+        Console.ResetColor();
+    }
+
+    static void PInfo(string message)
+    {
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"[INFO] {message}");
+        Console.ResetColor();
+    }
+
+    static void PSuccess(string message)
+    {
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"[SUCCESS] {message}");
+        Console.ResetColor();
+    }
+
+    static void WaitForExit()
+    {
+        Console.WriteLine("Press any key to exit...");
+        Console.ReadKey();
+    }
+}
